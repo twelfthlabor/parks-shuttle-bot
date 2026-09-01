@@ -1,0 +1,32 @@
+{
+  "name": "parks-shuttle-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Guarded booking helper for Parks Canada Moraine Lake shuttle reservations.",
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "setup": "node src/assistant.mjs --setup",
+    "run": "node src/assistant.mjs",
+    "watch": "node src/assistant.mjs --watch",
+    "dry-run": "node src/assistant.mjs --dry-run --now",
+    "preflight": "node src/assistant.mjs --preflight",
+    "checkout-test": "node src/assistant.mjs --checkout-test",
+    "seleniumbase": "scripts/run-seleniumbase.zsh",
+    "seleniumbase:setup": "scripts/run-seleniumbase.zsh --setup",
+    "seleniumbase:dry-run": "scripts/run-seleniumbase.zsh --dry-run --now",
+    "seleniumbase:preflight": "scripts/run-seleniumbase.zsh --preflight",
+    "seleniumbase:watch": "scripts/run-seleniumbase.zsh --watch",
+    "benchmark-dom": "node scripts/benchmark-dom-monitor.mjs",
+    "verify-live": "node scripts/verify-live-contract.mjs",
+    "check-sensitive": "node scripts/check-sensitive-files.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "luxon": "^3.7.2",
+    "playwright": "^1.55.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
