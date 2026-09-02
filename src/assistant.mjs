@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
@@ -35,7 +36,30 @@ import {
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profileDir = path.join(projectRoot, ".browser-profile");
-const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+function findChromeExecutable() {
+  if (process.platform === "darwin") {
+    const macPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    return existsSync(macPath) ? macPath : null;
+  }
+  if (process.platform === "win32") {
+    const programDirs = [
+      process.env["ProgramFiles"],
+      process.env["ProgramFiles(x86)"],
+      process.env["LocalAppData"]
+    ].filter(Boolean);
+    for (const dir of programDirs) {
+      const windowsPath = path.join(dir, "Google", "Chrome", "Application", "chrome.exe");
+      if (existsSync(windowsPath)) return windowsPath;
+    }
+    return null;
+  }
+  return null;
+}
+
+function alpineOrderOptions(config) {
+  return { alpineFirst: config.monitorAlpineStart === true };
+}
 
 function persistTerminalState(date, outcome, details) {
   let terminalState;
@@ -44,13 +68,13 @@ function persistTerminalState(date, outcome, details) {
   } catch (primaryError) {
     console.error(
       `Could not write the durable terminal state: ${primaryError.message}. ` +
-      "Using the /tmp safety fallback."
+      "Using the temp-directory safety fallback."
     );
     terminalState = recordTerminalState(
       date,
       outcome,
       details,
-      { baseDir: "/tmp" }
+      { baseDir: tmpdir() }
     );
   }
   console.log(
@@ -132,17 +156,46 @@ Options:
 `);
 }
 
+function powershellSingleQuoted(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function notifyWindows(title, message, speak) {
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    "$n = New-Object System.Windows.Forms.NotifyIcon",
+    "$n.Icon = [System.Drawing.SystemIcons]::Information",
+    "$n.Visible = $true",
+    `$n.ShowBalloonTip(10000, ${powershellSingleQuoted(title)}, ${powershellSingleQuoted(message)}, [System.Windows.Forms.ToolTipIcon]::Info)`,
+    speak
+      ? `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(${powershellSingleQuoted(`${title}. ${message}`)})`
+      : "Start-Sleep -Seconds 5",
+    "$n.Dispose()"
+  ].join("; ");
+  const child = execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script]
+  );
+  child.catch(() => {});
+}
+
 async function notify(title, message, speak = false) {
   console.log(`\n${title}: ${message}\n`);
-  if (process.platform !== "darwin") return;
-  const safeTitle = title.replace(/["\\]/g, "");
-  const safeMessage = message.replace(/["\\]/g, "");
-  await execFileAsync("osascript", [
-    "-e",
-    `display notification "${safeMessage}" with title "${safeTitle}" sound name "Glass"`
-  ]).catch(() => {});
-  if (speak) {
-    await execFileAsync("say", [`${safeTitle}. ${safeMessage}`]).catch(() => {});
+  if (process.platform === "darwin") {
+    const safeTitle = title.replace(/["\\]/g, "");
+    const safeMessage = message.replace(/["\\]/g, "");
+    await execFileAsync("osascript", [
+      "-e",
+      `display notification "${safeMessage}" with title "${safeTitle}" sound name "Glass"`
+    ]).catch(() => {});
+    if (speak) {
+      await execFileAsync("say", [`${safeTitle}. ${safeMessage}`]).catch(() => {});
+    }
+    return;
+  }
+  if (process.platform === "win32") {
+    notifyWindows(title, message, speak);
   }
 }
 
@@ -150,9 +203,15 @@ async function launchBrowser() {
   const options = {
     headless: false,
     viewport: { width: 1280, height: 850 },
-    args: ["--disable-background-timer-throttling"]
+    args: [
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-features=CalculateNativeWinOcclusion"
+    ]
   };
-  if (existsSync(chromePath)) options.executablePath = chromePath;
+  const chromePath = findChromeExecutable();
+  if (chromePath) options.executablePath = chromePath;
   return chromium.launchPersistentContext(profileDir, options);
 }
 
@@ -327,7 +386,11 @@ async function armPreferredSlot(page, date, config) {
   const rawLabels = (await slotButtons.allTextContents())
     .map((text) => text.trim().replace(/\s+/g, " "))
     .filter(isAvailableSlotLabel);
-  const ordered = orderSlotLabels(rawLabels, config.preferredDepartureWindows);
+  const ordered = orderSlotLabels(
+    rawLabels,
+    config.preferredDepartureWindows,
+    alpineOrderOptions(config)
+  );
   if (ordered.length === 0) return null;
 
   const firstCandidate = ordered[0];
@@ -375,7 +438,7 @@ async function armPreferredSlot(page, date, config) {
     return {
       label: preferredLabel,
       preselected: true,
-      slotName: match.rowLabel.replace(/^Moraine Lake:\s*/, "")
+      slotName: match.rowLabel.replace(/^Moraine Lake:?\s*/i, "")
     };
   }
   return { label: firstCandidate, preselected: false, slotName: null };
@@ -453,7 +516,11 @@ async function inspectAndMaybeHold(page, date, config, flags, armedSlotLabel = n
     if (flags.dryRun) console.log("Live window controls:", allLabels);
     const rawLabels = allLabels
       .filter(isAvailableSlotLabel);
-    ordered = orderSlotLabels(rawLabels, config.preferredDepartureWindows);
+    ordered = orderSlotLabels(
+      rawLabels,
+      config.preferredDepartureWindows,
+      alpineOrderOptions(config)
+    );
   }
   if (flags.dryRun) console.log("Candidate windows:", ordered);
   if (ordered.length === 0) return { status: "unavailable" };
@@ -487,7 +554,7 @@ async function inspectAndMaybeHold(page, date, config, flags, armedSlotLabel = n
 
     if (match) {
       const detectedAt = Date.now();
-      const slotName = match.rowLabel.replace(/^Moraine Lake:\s*/, "");
+      const slotName = match.rowLabel.replace(/^Moraine Lake:?\s*/i, "");
       if (flags.releaseEpochMs && detectedAt >= flags.releaseEpochMs) {
         console.log(
           `Timing: exact availability detected ${Math.max(0, detectedAt - flags.releaseEpochMs)} ms after release.`
@@ -850,8 +917,8 @@ async function runAssistant(date, config, flags) {
     Number(config.releaseRecoveryMinutes) || 0
   ) * 60_000;
   const recoveryPollMs = Math.max(
-    15_000,
-    (Number(config.releaseRecoveryPollSeconds) || 30) * 1000
+    10_000,
+    (Number(config.releaseRecoveryPollSeconds) || 20) * 1000
   );
   const recoveryBurstStartMinutes = Math.max(
     0,
@@ -1003,7 +1070,7 @@ async function runAssistant(date, config, flags) {
       return;
     }
 
-    const base = Math.max(60, Number(config.pollSeconds) || 120);
+    const base = Math.max(30, Number(config.pollSeconds) || 90);
     const jitter = Math.max(0, Number(config.pollJitterSeconds) || 0);
     const delaySeconds = base + Math.floor(Math.random() * (jitter + 1));
     console.log(`No exact-date seats. Checking again in ${delaySeconds} seconds.`);

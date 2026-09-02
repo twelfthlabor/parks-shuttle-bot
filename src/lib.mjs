@@ -67,6 +67,36 @@ export function slotLabelKey(value) {
     .replace(/partialavailability|unavailable|available/g, "");
 }
 
+/**
+ * Parses the leading departure clock time from a slot label such as
+ * "Time Slot 3am-4am Departures Available" or "Alpine Start 4:00am".
+ * Returns minutes since midnight, or null when no clock time is present.
+ */
+export function slotStartMinutes(value) {
+  const match = String(value ?? "").match(
+    /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i
+  );
+  if (!match) return null;
+  const hour = Number(match[1]);
+  if (hour < 1 || hour > 12) return null;
+  const minute = Number(match[2] ?? 0);
+  const hour24 = (hour % 12) + (match[3].toLowerCase() === "pm" ? 12 : 0);
+  return hour24 * 60 + minute;
+}
+
+/**
+ * Recognizes the pre-dawn Alpine Start departures (roughly midnight through
+ * 4:59 a.m.) either by an explicit "Alpine" product name or by an early AM
+ * clock time, regardless of the exact label the site uses.
+ */
+export function isAlpineSlotLabel(value) {
+  const label = String(value ?? "");
+  if (/alpine/i.test(label)) return true;
+  const minutes = slotStartMinutes(label);
+  if (minutes === null) return false;
+  return minutes < 5 * 60;
+}
+
 export function shouldAutoHold(config = {}, flags = {}) {
   return (
     flags.dryRun !== true &&
@@ -106,8 +136,9 @@ export function validateAutomationConfig(config = {}) {
   return true;
 }
 
-export function orderSlotLabels(labels, preferred = []) {
+export function orderSlotLabels(labels, preferred = [], options = {}) {
   const preference = preferred.map(normalizeWindow);
+  const alpineFirst = options.alpineFirst === true;
   return [...labels].sort((a, b) => {
     const aNormalized = normalizeWindow(a);
     const bNormalized = normalizeWindow(b);
@@ -115,6 +146,18 @@ export function orderSlotLabels(labels, preferred = []) {
     const bRank = preference.findIndex((p) => bNormalized.includes(p));
     const safeA = aRank === -1 ? Number.MAX_SAFE_INTEGER : aRank;
     const safeB = bRank === -1 ? Number.MAX_SAFE_INTEGER : bRank;
+
+    if (alpineFirst) {
+      const aAlpine = isAlpineSlotLabel(a);
+      const bAlpine = isAlpineSlotLabel(b);
+      if (aAlpine !== bAlpine) return aAlpine ? -1 : 1;
+      if (aAlpine && bAlpine) {
+        const aMinutes = slotStartMinutes(a) ?? Number.MAX_SAFE_INTEGER;
+        const bMinutes = slotStartMinutes(b) ?? Number.MAX_SAFE_INTEGER;
+        return aMinutes - bMinutes || safeA - safeB || a.localeCompare(b);
+      }
+    }
+
     return safeA - safeB || a.localeCompare(b);
   });
 }
@@ -128,7 +171,7 @@ export function findMoraineAvailability(matrix, dateHeader) {
   const candidates = matrix
     .slice(1)
     .map((row, index) => ({ row, rowIndex: index + 1 }))
-    .filter(({ row }) => row[0]?.text?.startsWith("Moraine Lake:"))
+    .filter(({ row }) => /^Moraine Lake/i.test(row[0]?.text ?? ""))
     .sort((a, b) => {
       const aLastMinute = a.row[0].text.includes("(Last Minute)") ? 0 : 1;
       const bLastMinute = b.row[0].text.includes("(Last Minute)") ? 0 : 1;

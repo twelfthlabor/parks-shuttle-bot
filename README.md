@@ -1,124 +1,84 @@
 # Parks Shuttle Bot
 
-Parks Shuttle Bot is a macOS booking helper for Parks Canada's Moraine Lake
-shuttle. It opens the official reservation site in a visible Chrome window,
-checks the requested date and departure window, and can move an available trip
-from Reserve to checkout.
+A guarded macOS and Windows helper for Parks Canada's Moraine Lake shuttle. It
+uses a visible browser to find the exact travel date, prefer configured departure
+windows, and continue from Reserve to checkout.
 
-The default configuration does not submit the final purchase. Sign-in, queues,
-CAPTCHA or WAF challenges, missing payment details, and unexpected booking
-states are left for the user in the open browser.
+Final purchase is disabled by default. The user retains control for sign-in,
+queues, CAPTCHA/WAF challenges, payment details, and unexpected booking states.
 
-## What it does
+## Features
 
-- Calculates the rolling release time in Mountain Time.
-- Uses the exact Moraine Lake date cell instead of relying on a broad
-  "Available" result card.
-- Orders departure windows using `config.json`.
-- Can preselect the target cell before release and click Reserve when the gate
-  opens.
-- Advances through Reserve, cart, and checkout when those controls are present.
-- Watches for cancellations at a conservative interval.
-- Records timing and limited control-state diagnostics under the ignored
-  `output/` directory.
-
-Playwright is the primary runner. A SeleniumBase runner is included as an
-alternative and uses a separate browser profile.
+- Times the rolling 8:00 a.m. Mountain Time release using the Parks Canada
+  server clock and preselects the exact date cell.
+- Prioritizes Alpine Start departures (midnight–4:59 a.m.) when
+  `monitorAlpineStart` is enabled, then applies `preferredDepartureWindows`.
+- Watches for cancellations at a configurable, conservative interval.
+- Can advance through Reserve, cart, and checkout without submitting payment.
+- Stores limited diagnostics in the ignored `output/` directory.
+- Includes a Playwright runner for macOS and Windows and an optional macOS-only
+  SeleniumBase runner.
 
 ## Requirements
 
-- macOS
-- Google Chrome
+- macOS or Windows
 - Node.js 20 or newer
-- pnpm 11
+- pnpm 11 or npm
+- Google Chrome, or Playwright's bundled Chromium
 
-SeleniumBase also requires Python 3.11 or newer.
+The SeleniumBase runner additionally needs Python 3.11 or newer.
 
-## Install
+## Quick start
+
+Install dependencies and create the local configuration:
 
 ```bash
-cd /path/to/parks-shuttle-bot
 pnpm install
 cp config.example.json config.json
 pnpm test
-pnpm verify-live
 ```
 
-`verify-live` checks the public Parks Canada application for the exact-date,
-Reserve, cart, checkout, and server-clock controls used by the bot. It does not
-sign in, hold inventory, or submit a reservation.
+On macOS, double-click **Parks Shuttle Bot.command**. On Windows, double-click
+**Parks Shuttle Bot.cmd**. The launchers create `config.json` when needed and
+offer setup, release, cancellation-watch, rehearsal, and verification modes.
 
-## macOS launcher
-
-Double-click **Parks Shuttle Bot.command** and choose a mode. The launcher uses
-the bundled Codex Node.js runtime when it is available and installs project
-dependencies on first use.
-
-Run setup once before a release. Chrome will open with a persistent profile in
-`.browser-profile/`; sign in to Parks Canada, then close the window. Do not
-share or commit that directory.
+Run setup once to save the Parks Canada sign-in session in
+`.browser-profile/`, then close the browser. Keep the computer awake and stay
+near it during a live run.
 
 ## Command line
 
-Replace the example date with the intended travel date.
+Replace the example date with the intended travel date:
 
 ```bash
-# Save the Parks Canada sign-in session
 pnpm run setup
-
-# Open the live flow without holding seats
 pnpm run dry-run -- --date 2026-09-15
-
-# Select the exact date cell without clicking Reserve
 pnpm run preflight -- --date 2026-09-15
-
-# Wait for the official release and attempt the configured flow
 pnpm run run -- --date 2026-09-15
-
-# Check periodically for returned inventory
 pnpm run watch -- --date 2026-09-15
-
-# Create a temporary hold and rehearse the path to checkout
 pnpm run checkout-test -- --date 2026-09-15
 ```
 
-`checkout-test` can hold real inventory. It stops before payment or final
-confirmation.
+`dry-run` never holds seats. `preflight` selects the exact date cell without
+reserving. `checkout-test` may create a temporary cart hold but stops before
+payment or final confirmation.
 
 ## Configuration
 
-Copy `config.example.json` to `config.json` and review it before every live
-run. The local file is ignored by Git.
-
-The settings most likely to need attention are:
+Review `config.json` before every live run, especially:
 
 - `partySize` and `passengerCategories`
-- `preferredDepartureWindows`
-- `autoHold`
-- `autoProceedToCheckout`
-- `autoPrepareCheckout`
-- `autoSubmitPurchase`
-- `maxPurchaseCAD`
+- `monitorAlpineStart` and `preferredDepartureWindows`
+- `pollSeconds`, `pollJitterSeconds`, and `maxWatchMinutes`
+- `autoHold`, `autoProceedToCheckout`, and `autoPrepareCheckout`
+- `autoSubmitPurchase` and `maxPurchaseCAD`
 
-The checked-in example sets `autoSubmitPurchase` to `false`. Do not enable it
-without reviewing the target date, passenger mix, destination, and total cap.
-Never put a password, card number, security code, session cookie, or account
-recovery value in the project files.
+With `monitorAlpineStart: true`, pre-dawn departures are considered first in
+chronological order. Set it to `false` to use only the configured daytime
+preference order.
 
-## SeleniumBase runner
-
-The alternative runner creates `.venv/` and `.seleniumbase-profile/` locally.
-Both are ignored by Git.
-
-```bash
-pnpm run seleniumbase:setup
-pnpm run seleniumbase:dry-run -- --date 2026-09-15
-pnpm run seleniumbase:preflight -- --date 2026-09-15
-pnpm run seleniumbase -- --date 2026-09-15
-pnpm run seleniumbase:watch -- --date 2026-09-15
-```
-
-The SeleniumBase path does not enable UC or CDP stealth modes.
+The checked-in example keeps `autoSubmitPurchase` false. Do not enable it
+without confirming the date, passenger mix, destination, and price cap.
 
 ## Verification
 
@@ -130,30 +90,26 @@ pnpm verify-live
 pnpm check-sensitive
 ```
 
-`benchmark-dom` runs the detection and Reserve-to-checkout path against a local
-Chromium page. It does not contact Parks Canada inventory. `check-sensitive`
-fails if a tracked file contains a local browser profile, live config, common
-credential format, or another blocked path.
+`benchmark-dom` tests detection and the Reserve-to-checkout path locally.
+`verify-live` checks the public site's controls without signing in, holding
+inventory, or submitting a reservation. CI runs the automated tests and
+sensitive-file check on every push and pull request.
 
-GitHub Actions runs the Node tests, Python tests, and sensitive-file check on
-every push and pull request.
+## Security and limits
 
-## Limits
+Never commit or share `config.json`, `.browser-profile/`,
+`.seleniumbase-profile/`, `output/`, credentials, payment details, cookies, or
+account-recovery data. These local paths are ignored by Git, and
+`pnpm check-sensitive` rejects tracked sensitive paths and common credential
+formats.
 
-This project cannot guarantee a reservation. Inventory can disappear between
-the availability check and the hold, and Parks Canada can change its release
-rules, controls, queue, or verification requirements. Keep the Mac awake, stay
-at the browser during the release, and treat the booking as complete only when
-Parks Canada shows a confirmation number.
+The bot does not bypass access controls and cannot guarantee a reservation.
+Inventory and site controls can change at any time; treat a booking as complete
+only when Parks Canada displays a confirmation number.
 
-The bot does not bypass queues, CAPTCHA, sign-in, payment checks, or other
-access controls. It uses one visible browser session and does not retry an
-ambiguous Reserve result because the first attempt may already have created a
-hold.
+## Additional notes
 
-## Project notes
-
-- [Booking flow and source links](docs/RESEARCH.md)
+- [Booking flow and sources](docs/RESEARCH.md)
 - [Live control audit](docs/LIVE-ELEMENT-AUDIT-2026-07-30.md)
 - [Release investigation](docs/LIVE-RELEASE-RESEARCH-2026-07-26.md)
 - [SeleniumBase assessment](docs/SELENIUMBASE-ASSESSMENT.md)

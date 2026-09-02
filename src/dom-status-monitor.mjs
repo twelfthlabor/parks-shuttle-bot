@@ -104,7 +104,7 @@ function installObserverInPage({ targetDate, bindingName }) {
       const rowLabel = (cell.closest("tr")?.children?.[0]?.textContent || "")
         .trim()
         .replace(/\s+/g, " ");
-      if (!rowLabel.startsWith("Moraine Lake:")) continue;
+      if (!/^Moraine Lake/i.test(rowLabel)) continue;
 
       const event = {
         type: "cell",

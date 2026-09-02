@@ -5,12 +5,14 @@ import {
   buildSearchUrl,
   checkoutStageFrom,
   findMoraineAvailability,
+  isAlpineSlotLabel,
   isAvailableSlotLabel,
   isFinalPurchaseAction,
   orderSlotLabels,
   releaseTimeFor,
   shouldAutoHold,
   slotLabelKey,
+  slotStartMinutes,
   targetDateHeader,
   validateAutomationConfig
 } from "../src/lib.mjs";
@@ -47,6 +49,52 @@ test("orders candidate cards using configured time preference", () => {
   const ordered = orderSlotLabels(labels, ["4pm-5pm", "6:30am-7am"]);
   assert.match(ordered[0], /4pm-5pm/);
   assert.match(ordered[1], /6:30am-7am/);
+});
+
+test("recognizes Alpine Start windows by product name or early AM clock time", () => {
+  assert.equal(isAlpineSlotLabel("Time Slot 3am-4am Departures Available"), true);
+  assert.equal(isAlpineSlotLabel("Alpine Start 4am Departures Available"), true);
+  assert.equal(isAlpineSlotLabel("Time Slot 12am-1am Departures Available"), true);
+  assert.equal(isAlpineSlotLabel("Time Slot 6:30am-7am Departures Available"), false);
+  assert.equal(isAlpineSlotLabel("Time Slot 4pm-5pm Departures Available"), false);
+  assert.equal(isAlpineSlotLabel("Time Slot 6:45am-7:45am Departures Available"), false);
+  assert.equal(isAlpineSlotLabel(""), false);
+});
+
+test("parses the leading departure clock time as minutes since midnight", () => {
+  assert.equal(slotStartMinutes("Time Slot 6:30am-7am Departures Available"), 390);
+  assert.equal(slotStartMinutes("3am-4am Available"), 180);
+  assert.equal(slotStartMinutes("12am-1am Available"), 0);
+  assert.equal(slotStartMinutes("4:15pm-5pm Available"), 975);
+  assert.equal(slotStartMinutes("no clock time here"), null);
+});
+
+test("puts Alpine Start windows first in chronological order when enabled", () => {
+  const labels = [
+    "Time Slot 6:30am-7am Departures Available",
+    "Time Slot 4am-5am Departures Available",
+    "Time Slot 3am-4am Departures Available",
+    "Time Slot 9am-10am Departures Available"
+  ];
+  const preferred = ["6:30am-7am", "9am-10am"];
+
+  const withoutAlpine = orderSlotLabels(labels, preferred);
+  assert.match(withoutAlpine[0], /6:30am-7am/);
+
+  const withAlpine = orderSlotLabels(labels, preferred, { alpineFirst: true });
+  assert.match(withAlpine[0], /3am-4am/);
+  assert.match(withAlpine[1], /4am-5am/);
+  assert.match(withAlpine[2], /6:30am-7am/);
+  assert.match(withAlpine[3], /9am-10am/);
+});
+
+test("keeps the daytime preference order when Alpine Start is disabled", () => {
+  const labels = [
+    "Time Slot 3am-4am Departures Available",
+    "Time Slot 6:30am-7am Departures Available"
+  ];
+  const ordered = orderSlotLabels(labels, ["6:30am-7am"], {});
+  assert.match(ordered[0], /6:30am-7am/);
 });
 
 test("recognizes duplicated live Available text without matching Unavailable", () => {
@@ -141,6 +189,27 @@ test("does not mistake Unavailable for Available", () => {
     ]
   ];
   assert.equal(findMoraineAvailability(matrix, "Tue, Sep 15"), null);
+});
+
+test("detects Alpine Start availability rows without the colon format", () => {
+  const matrix = [
+    [{ text: "Activity" }, { text: "Tue, Sep 15" }],
+    [
+      { text: "Moraine Lake Alpine Start 3am-4am (Last Minute)" },
+      { aria: "Moraine Lake Alpine Start 3am-4am (Last Minute) Available" }
+    ],
+    [
+      { text: "Moraine Lake: 6:30am-7am (Last Minute)" },
+      { aria: "Moraine Lake Unavailable" }
+    ]
+  ];
+
+  assert.deepEqual(findMoraineAvailability(matrix, "Tue, Sep 15"), {
+    rowIndex: 1,
+    columnIndex: 1,
+    rowLabel: "Moraine Lake Alpine Start 3am-4am (Last Minute)",
+    status: "Moraine Lake Alpine Start 3am-4am (Last Minute) Available "
+  });
 });
 
 test("recognizes checkout stages without treating checkout as a purchase", () => {

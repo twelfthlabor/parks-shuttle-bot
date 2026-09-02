@@ -1,5 +1,6 @@
 {
   "partySize": 2,
+  "monitorAlpineStart": true,
   "preferredDepartureWindows": [
     "6:30am-7am",
     "7am-8am",
@@ -21,12 +22,12 @@
   "releaseRetryIntervalMilliseconds": 150,
   "releaseOutcomeTimeoutMilliseconds": 5000,
   "releaseRecoveryMinutes": 60,
-  "releaseRecoveryPollSeconds": 30,
+  "releaseRecoveryPollSeconds": 20,
   "releaseRecoveryBurstStartMinutes": 19,
   "releaseRecoveryBurstEndMinutes": 30,
   "releaseRecoveryBurstPollSeconds": 10,
-  "pollSeconds": 120,
-  "pollJitterSeconds": 15,
+  "pollSeconds": 90,
+  "pollJitterSeconds": 10,
   "maxWatchMinutes": 180,
   "autoHold": true,
   "autoProceedToCheckout": true,

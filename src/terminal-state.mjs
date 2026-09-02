@@ -13,16 +13,24 @@ const VALID_OUTCOMES = new Set([
   "recovery-exhausted"
 ]);
 
+function defaultBaseDir() {
+  const home = homedir();
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA ?? path.join(home, "AppData", "Roaming");
+    return path.join(appData, "Parks Shuttle Bot");
+  }
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Parks Shuttle Bot");
+  }
+  const configHome = process.env.XDG_CONFIG_HOME ?? path.join(home, ".config");
+  return path.join(configHome, "parks-shuttle-bot");
+}
+
 export function terminalStatePathFor(targetDate, options = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
     throw new Error(`Invalid terminal-state target date: ${targetDate}`);
   }
-  const baseDir = options.baseDir ?? path.join(
-    homedir(),
-    "Library",
-    "Application Support",
-    "Parks Shuttle Bot"
-  );
+  const baseDir = options.baseDir ?? defaultBaseDir();
   return path.join(baseDir, `terminal-${targetDate}.json`);
 }
 

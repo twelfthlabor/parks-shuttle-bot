@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +10,19 @@ import { advanceReleaseToCheckout } from "../src/checkout-flow.mjs";
 import { installDomStatusMonitor } from "../src/dom-status-monitor.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+function findChromeExecutable() {
+  const candidates = [];
+  if (process.platform === "darwin") {
+    candidates.push("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+  } else if (process.platform === "win32") {
+    for (const dir of [process.env["ProgramFiles"], process.env["ProgramFiles(x86)"], process.env["LocalAppData"]]) {
+      if (dir) candidates.push(path.join(dir, "Google", "Chrome", "Application", "chrome.exe"));
+    }
+  }
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
 const targetDate = "2026-07-29";
 
 function html(body, script = "") {
@@ -67,7 +80,10 @@ const baseUrl = `http://127.0.0.1:${address.port}`;
 
 let browser;
 try {
-  browser = await chromium.launch({ headless: true, executablePath: chromePath });
+  const chromePath = findChromeExecutable();
+  browser = await chromium.launch(
+    chromePath ? { headless: true, executablePath: chromePath } : { headless: true }
+  );
   const context = await browser.newContext();
   let resolveAvailable;
   const availability = new Promise((resolve) => {
